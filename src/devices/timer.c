@@ -93,10 +93,14 @@ timer_sleep (int64_t ticks)
 
   ASSERT (intr_get_level () == INTR_ON);
   /* Check if the number of ticks is greater than or equal to the elapsed time */
-  /* If it is then wake up the thread */
-  /* Otherwise put it to sleep */
+  if(timer_elapsed (start) < ticks) 
+  thread_block ();/* If it is then wake up the thread */
+  else
+    thread_sleep (); /* Otherwise put it to sleep */
+  /*
   while (timer_elapsed (start) < ticks) 
     thread_yield ();
+  */
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
