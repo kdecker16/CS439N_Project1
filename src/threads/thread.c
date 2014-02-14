@@ -180,9 +180,13 @@ thread_create (const char *name, int priority,
   if (t == NULL)
     return TID_ERROR;
 
+  /** TODO: Do we priority schedule here... **/
+
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+
+  /** TODO: ...Or here? **/ 
 
   /* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
@@ -345,12 +349,21 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  /* Check if priority is the highest */
+  /* If it is then keep going */
+  /* If it isn't: */
+  /* Put current thread to sleep */
+  /* Yield processor to highest priority thread*/
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
+  /* See if the thread is holding the lock */
+  /* If it is  */
+  /* If multiple donations occur see which priority is highest and assign that */
+
   return thread_current ()->priority;
 }
 
