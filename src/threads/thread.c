@@ -70,6 +70,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+static bool compare_priority(const struct list_elem *, const struct list_elem *, void *);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -209,6 +210,9 @@ thread_create (const char *name, int priority,
 
   intr_set_level (old_level);
 
+  // TODO: Add thread to all_list 
+	// add_to function to add it to sorted p queue
+
   /* Add to run queue. */
   thread_unblock (t);
 
@@ -254,6 +258,15 @@ thread_unblock (struct thread *t)
 
   list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
+
+  /*if ((thread_current()->thread_get_priority() < t->thread_get_priority())
+	&& thread_current() != idle_thread) {
+    if (intr_context ())
+      intr_yield_on_return();
+    else
+      thread_yield();
+  }*/
+
   intr_set_level (old_level);
 }
 
@@ -304,6 +317,8 @@ thread_exit (void)
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
+
+  //TODO: free any locks it holds
   intr_disable ();
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
@@ -512,7 +527,19 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else
+	//return list_entry (list_max(&ready_list, compare_priority, 0), struct thread, elem);
+	//TODO: replace list_pop_front with list_max, must create less function
+		// less func: priority1, priority2 = t->status == BLOCKED ? 0 : get_thread_priority 
     return list_entry (list_pop_front (&ready_list), struct thread, elem);
+}
+
+bool compare_priority(const struct list_elem *a, const struct list_elem *b, void *aux)
+{
+  struct thread *t1 = list_entry (a, struct thread, allelem);
+  struct thread *t2 = list_entry (b, struct thread, allelem);
+  int p1 = t1->priority;
+  int p2 = t2->priority;
+  return p1 < p2;
 }
 
 /* Completes a thread switch by activating the new thread's page
