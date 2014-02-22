@@ -102,6 +102,9 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+    /* Our new member - is the number of ticks remaining of sleep (should always be > 0) */
+    int64_t sleepTime;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -139,5 +142,7 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+//struct semaphore tickSema;
 
 #endif /* threads/thread.h */

@@ -24,11 +24,18 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+static struct semaphore tickSema;
+
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
+
+static void timer_check_sleep(struct thread *t, void *aux);
+
+/* Any semaphores we need to initialize */
+//struct semaphore tickSema;
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -37,6 +44,8 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  sema_init(&tickSema, 0);
+  ASSERT(&tickSema != NULL);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -92,15 +101,13 @@ timer_sleep (int64_t ticks)
   int64_t start = timer_ticks ();
 
   ASSERT (intr_get_level () == INTR_ON);
-  /* Check if the number of ticks is greater than or equal to the elapsed time */
-  if(timer_elapsed (start) < ticks) 
-  thread_block ();/* If it is then wake up the thread */
-  else
-    thread_sleep (); /* Otherwise put it to sleep */
-  /*
+
+  // TODO: Block thread with Sema->Down()
+  sema_down(&tickSema);
+
+
   while (timer_elapsed (start) < ticks) 
     thread_yield ();
-  */
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -179,6 +186,9 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+  
+  // TODO: Call thread_foreach to check if thread needs to wake up
+  thread_foreach(timer_check_sleep,0);
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
@@ -250,4 +260,19 @@ real_time_delay (int64_t num, int32_t denom)
      the possibility of overflow. */
   ASSERT (denom % 1000 == 0);
   busy_wait (loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000)); 
+}
+
+static void timer_check_sleep(struct thread *t, void *aux)
+{
+  // TODO: If the thread is blocked...
+  if(t->status == THREAD_BLOCKED) {
+    // TODO: ... and the thread->sleeptime <= 0
+    if(t->sleepTime <= 0) 
+    {
+      sema_up(&tickSema);
+    }
+    // TODO: Else sleepTime--
+    else
+      t->sleepTime = t->sleepTime - 1;
+  }
 }

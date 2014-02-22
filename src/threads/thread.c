@@ -108,6 +108,9 @@ thread_start (void)
   /* Create the idle thread. */
   struct semaphore idle_started;
   sema_init (&idle_started, 0);
+  // TODO: Initialize tickSema
+  //sema_init(&tickSema, 0);
+
   thread_create ("idle", PRI_MIN, idle, &idle_started);
 
   /* Start preemptive thread scheduling. */
@@ -180,13 +183,9 @@ thread_create (const char *name, int priority,
   if (t == NULL)
     return TID_ERROR;
 
-  /** TODO: Do we priority schedule here... **/
-
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-
-  /** TODO: ...Or here? **/ 
 
   /* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
@@ -250,6 +249,9 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
+
+  /* Set priority to base_priority */
+
   list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
@@ -353,7 +355,7 @@ thread_set_priority (int new_priority)
   /* If it is then keep going */
   /* If it isn't: */
   /* Put current thread to sleep */
-  /* Yield processor to highest priority thread*/
+  /* Yield processor to highest priority thread */
 }
 
 /* Returns the current thread's priority. */
