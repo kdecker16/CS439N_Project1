@@ -179,6 +179,8 @@ lock_init (struct lock *lock)
 
   lock->holder = NULL;
   sema_init (&lock->semaphore, 1);
+
+  // Initialize list_elem
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -196,7 +198,13 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  bool success = lock_try_acquire(lock);
+  if(!success)
+    add_lock_to_list(lock, thread_current()->lock_list);
+
   sema_down (&lock->semaphore);
+  // Remove lock from the list of locks the thread wants
+  remove_lock_from_list(lock, thread_current()->lock_list);
   lock->holder = thread_current ();
 }
 
@@ -218,6 +226,7 @@ lock_try_acquire (struct lock *lock)
   if (success)
     lock->holder = thread_current ();
   return success;
+
 }
 
 /* Releases LOCK, which must be owned by the current thread.
@@ -232,6 +241,7 @@ lock_release (struct lock *lock)
   ASSERT (lock_held_by_current_thread (lock));
 
   lock->holder = NULL;
+  
   sema_up (&lock->semaphore);
 }
 
@@ -335,4 +345,16 @@ cond_broadcast (struct condition *cond, struct lock *lock)
 
   while (!list_empty (&cond->waiters))
     cond_signal (cond, lock);
+}
+
+/********* OUR FUNCTIONS *********/
+void remove_lock_from_list(struct lock *current_lock, struct list lock_list)
+{
+  struct list_elem *l_elem = &(current_lock->lock_elem);
+  list_remove(l_elem);
+}
+void add_lock_to_list(struct lock *current_lock, struct list lock_list)
+{
+  struct list_elem *l_elem = &(current_lock->lock_elem);
+  list_push_back (&lock_list, l_elem);
 }
