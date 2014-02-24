@@ -37,6 +37,9 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
+/* Lock used by thread_set_priority */
+static struct lock priority_lock;
+
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
   {
@@ -90,6 +93,7 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
+  lock_init (&priority_lock);
   list_init (&ready_list);
   list_init (&all_list);
 
@@ -250,9 +254,10 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
 
-  /* Set priority to base_priority */
+  // Call list_insert_ordered instead - Kaitlin
+  list_insert_ordered (&ready_list, &t->elem, my_less_func, 0);
 
-  list_push_back (&ready_list, &t->elem);
+  //list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -323,7 +328,8 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered (&ready_list, &cur->elem, my_less_func, 0);
+    //list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -350,21 +356,19 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+
   thread_current ()->priority = new_priority;
-  /* Check if priority is the highest */
-  /* If it is then keep going */
-  /* If it isn't: */
-  /* Put current thread to sleep */
-  /* Yield processor to highest priority thread */
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
-  /* See if the thread is holding the lock */
-  /* If it is  */
-  /* If multiple donations occur see which priority is highest and assign that */
+  // In the presence of priority donation, returns the higher (donated) priority
+  // Check the first element of 
+  // To get priority the current thread should run with, get the top priority of the thread waiting for the lock 
+  
+
 
   return thread_current ()->priority;
 }
@@ -484,6 +488,7 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->base_priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
 }
@@ -597,6 +602,29 @@ allocate_tid (void)
 
   return tid;
 }
+
+bool my_less_func(const struct list_elem *a, const struct list_elem *b, void *aux)
+{
+  struct thread *t1 = list_entry(a, struct thread, elem);
+  struct thread *t2 = list_entry(b, struct thread, elem);
+  return t1->priority > t2->priority;
+}
+
+void thread_donate_priority(struct thread *t)
+{
+  /* We need to ensure protection for priority donation - Kaitlin */
+  
+  // Get the priority_lock before donating - Kaitlin 
+  lock_acquire(&priority_lock);
+  // Donate - assign thread t's priority to the current thread's priority - Kaitlin
+  t->priority = thread_get_priority();
+  // Yield processor to highest priority thread which should now be t - Kaitlin
+  if(t->priority >= thread_get_priority())
+    thread_yield();
+  // Release the priority_lock
+  lock_release(&priority_lock);
+}
+
 
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */

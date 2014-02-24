@@ -66,9 +66,12 @@ sema_down (struct semaphore *sema)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
+
   while (sema->value == 0) 
     {
-      list_push_back (&sema->waiters, &thread_current ()->elem);
+      // Add to list in order - Kaitlin*
+      list_insert_ordered (&sema->waiters, &thread_current()->elem, my_less_func, 0);
+      //list_push_back (&sema->waiters, &thread_current ()->elem);
       thread_block ();
     }
   sema->value--;
@@ -118,6 +121,7 @@ sema_up (struct semaphore *sema)
                                 struct thread, elem));
   sema->value++;
   intr_set_level (old_level);
+
 }
 
 static void sema_test_helper (void *sema_);
@@ -196,6 +200,12 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  // If a thread enters here it needs a lock - Kaitlin
+  // If the thread holding the lock has a lower priority, donate priority to it - Kaitlin
+  if(lock->holder->priority < thread_current()->priority)
+  {
+    //thread_donate_priority(lock->holder);
+  }
   sema_down (&lock->semaphore);
   lock->holder = thread_current ();
 }
@@ -231,8 +241,15 @@ lock_release (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
+  // Set the thread's priority back to its base priority
+  int base_priority = thread_current()->base_priority;
+  thread_set_priority(base_priority);
+
   lock->holder = NULL;
   sema_up (&lock->semaphore);
+
+  // If a thread enters here it's releasing the lock - Kaitlin
+  // If a thread releases the lock and it went through priority donation then we need to set its priority back to its old priority
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -295,8 +312,12 @@ cond_wait (struct condition *cond, struct lock *lock)
   ASSERT (lock_held_by_current_thread (lock));
   
   sema_init (&waiter.semaphore, 0);
-  list_push_back (&cond->waiters, &waiter.elem);
+  // Insert into list by order - Kaitlin*
+  list_insert_ordered (&cond->waiters, &waiter.elem, my_less_func, 0);
+  //list_push_back (&cond->waiters, &waiter.elem);
+
   lock_release (lock);
+
   sema_down (&waiter.semaphore);
   lock_acquire (lock);
 }
