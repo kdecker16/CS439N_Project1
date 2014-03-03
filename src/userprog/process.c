@@ -59,6 +59,7 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+
   success = load (file_name, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
@@ -88,6 +89,8 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  while(1)
+    ;
   return -1;
 }
 
@@ -221,8 +224,21 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
+  // parse
+  char *fn_copy;
+  char *executable;
+  char *arguments;
+  char *save_ptr;
+  fn_copy = palloc_get_page (0);
+  strlcpy (fn_copy, file_name, PGSIZE);
+  executable = strtok_r(fn_copy, " ", &save_ptr);
+  arguments = strtok_r(NULL, "\0", &save_ptr);
+  
   /* Open executable file. */
-  file = filesys_open (file_name);
+  //file = filesys_open (file_name);
+  // Changed the implentation to open up executable only
+  file = filesys_open (executable); 
+
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -307,6 +323,63 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
+
+  // Put arguments on the stack - Kaitlin
+
+  // Place the words at the top of the stack
+  buffer = strtok_r(arguments, " ", save_ptr);
+  int i;
+  int argc;
+  char **argv;
+  void *fake_return;
+  if(buffer) 
+  {
+    i = 1;
+    argv[0] = buffer;
+    argc = 1;
+    while(buffer = strtok_r(NULL," ", save_ptr))
+    {
+      // Store argument in argv
+      argv[i++] = buffer;
+      argc++;
+    }
+  }
+  else
+    // what do if no args?
+  {
+    argc = 0;
+    // There is an errrrrrrrorr, we had a proooooooblem
+  }
+  // Push values onto stack
+  i = 0;
+  for(i = 0; i < argc; i++)
+  {
+    // Push value onto the stack
+    esp = *argv[i];
+    // Decrement stack pointer
+    esp = esp - 1;
+  }
+  // Round the stack pointer down to a multiple of 4
+  // Insert word-align - 4 bytes
+  // Push argument pointers onto the stack
+  for(i = 0; i < argc; i++)
+  {
+    esp = argv[i];
+    // Decrement stack pointer
+    esp = esp - 1;
+  }
+  // Push address of argv[0] onto the stack 
+  esp = &argv[0];
+  // Decrement stack pointer
+  esp = esp - 1;
+  // Push argc onto the stack
+  esp = argc;
+  // Decrement stack pointer
+  esp = esp - 1;
+  // Push a fake return address
+  esp = fake_return;
+  // Decrement stack pointer
+  esp = esp - 1;
 
   success = true;
 
@@ -437,7 +510,8 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+        //*esp = PHYS_BASE;
+        *esp = PHYS_BASE - 12; // DWNT
       else
         palloc_free_page (kpage);
     }

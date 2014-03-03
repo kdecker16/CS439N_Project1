@@ -74,6 +74,11 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+/* Functions that we made */
+static bool compare_priority(const struct list_elem *, const struct list_elem *, void *);
+static void donate_priority (struct thread *, struct thread *);
+
+
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -102,6 +107,9 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+
+  // initialize lock_list in thread - Kailson
+  list_init (&(thread_current()->lock_list));
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -112,8 +120,6 @@ thread_start (void)
   /* Create the idle thread. */
   struct semaphore idle_started;
   sema_init (&idle_started, 0);
-  // TODO: Initialize tickSema
-  //sema_init(&tickSema, 0);
 
   thread_create ("idle", PRI_MIN, idle, &idle_started);
 
@@ -213,7 +219,7 @@ thread_create (const char *name, int priority,
 
   intr_set_level (old_level);
 
-  /* Add to run queue. */
+    /* Add to run queue. */
   thread_unblock (t);
 
   return tid;
@@ -254,11 +260,21 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
 
-  // Call list_insert_ordered instead - Kaitlin
-  list_insert_ordered (&ready_list, &t->elem, my_less_func, 0);
-
-  //list_push_back (&ready_list, &t->elem);
+  list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
+
+  // Change the current thread's priority back to its base priority - Kailson
+  thread_set_priority(thread_current()->base_priority);
+
+  // If the current thread no longer has the highest priority, yield - Kailson
+  if ((thread_get_priority() < t->priority)	&& thread_current() != idle_thread) 
+  {
+    if (intr_context ())
+      intr_yield_on_return();
+    else
+      thread_yield();
+  }
+
   intr_set_level (old_level);
 }
 
@@ -309,6 +325,9 @@ thread_exit (void)
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
+
+  // Kailson did free any locks it holds
+
   intr_disable ();
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
@@ -364,12 +383,6 @@ thread_set_priority (int new_priority)
 int
 thread_get_priority (void) 
 {
-  // In the presence of priority donation, returns the higher (donated) priority
-  // Check the first element of 
-  // To get priority the current thread should run with, get the top priority of the thread waiting for the lock 
-  
-
-
   return thread_current ()->priority;
 }
 
@@ -514,10 +527,17 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
+  struct thread *t;
+  if (list_empty (&ready_list)) {
+    ASSERT(idle_thread != NULL);
     return idle_thread;
+  }
   else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    // Pop off the top priority thread
+  	t = list_entry (list_max(&ready_list, compare_priority, 0), struct thread, elem);
+  ASSERT(t != NULL);
+	return t;
+    //return list_entry (list_pop_front (&ready_list), struct thread, elem);
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -542,6 +562,43 @@ thread_schedule_tail (struct thread *prev)
   struct thread *cur = running_thread ();
   
   ASSERT (intr_get_level () == INTR_OFF);
+
+  // Check if current thread needs a lock
+  if(!list_empty(&(cur->lock_list)))
+  {
+    // If it does, check what has the lock
+    struct list current_lock_list = cur->lock_list;
+    
+    struct list_elem *e;
+    ASSERT (intr_get_level () == INTR_OFF);
+
+    for (e = list_begin (&current_lock_list); e != list_end (&current_lock_list); e = list_next (e))
+    {
+      // This is the current lock that we're looking at in the thread's lock list
+      struct lock *current_lock =  
+      list_entry (
+        list_pop_front (
+          &(cur->lock_list)), 
+        struct lock, 
+        lock_elem);
+      
+      // See which thread is currently holding the lock
+      struct thread *thread_holding_lock = current_lock->holder;
+      
+      // Make sure the thread isn't null
+      if(thread_holding_lock == NULL)
+        continue;
+
+      // if the thread which has the lock has a lower priority than our current thread, do priority donation
+      if(thread_holding_lock->priority <= cur->priority)
+      {
+        donate_priority (cur, thread_holding_lock);
+        thread_yield();
+      }
+    }
+    
+    
+  }
 
   /* Mark us as running. */
   cur->status = THREAD_RUNNING;
@@ -580,6 +637,7 @@ schedule (void)
   struct thread *next = next_thread_to_run ();
   struct thread *prev = NULL;
 
+  ASSERT (next != NULL);
   ASSERT (intr_get_level () == INTR_OFF);
   ASSERT (cur->status != THREAD_RUNNING);
   ASSERT (is_thread (next));
@@ -629,3 +687,21 @@ void thread_donate_priority(struct thread *t)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/******** NEW FUNCTIONS ********/
+
+/* A less function to compare priorities - this function returns the true if b's thread priority is greater than a's */
+bool compare_priority(const struct list_elem *a, const struct list_elem *b, void *aux)
+{
+  struct thread *t1 = list_entry (a, struct thread, allelem);
+  struct thread *t2 = list_entry (b, struct thread, allelem);
+  int p1 = t1->priority;
+  int p2 = t2->priority;
+  return p1 < p2;
+}
+
+void donate_priority (struct thread * donor, struct thread * recipient)
+{
+  recipient->priority = donor->priority;
+}
+/******** END NEW FUNCTIONS ********/
