@@ -29,6 +29,7 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
+  char *rest;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -37,9 +38,11 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  
+  char *program_name = strtok_r (fn_copy, " ", &rest);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (program_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
   return tid;
@@ -51,15 +54,24 @@ static void
 start_process (void *file_name_)
 {
   char *file_name = file_name_;
+  char *rest;
+  char *token;
   struct intr_frame if_;
   bool success;
+  int i;
+  int argc = 0;
+  
+  /* Length of arguments with sentinel value */
+  int arguments_length = strlen (file_name) + 1;
+
+  /* Extract file name */
+  char *program_name = strtok_r (file_name, " ", &rest);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-
   success = load (file_name, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
@@ -67,6 +79,60 @@ start_process (void *file_name_)
   if (!success) 
     thread_exit ();
 
+  char **args = (char **) malloc (arguments_length * sizeof(char));
+  // Insert oom handler here
+
+  args[argc++] = program_name;
+  arguments_length = strlen (program_name) + 1;
+  
+  /* Read in args and check multiple spaces for length */
+  while(token = strtok_r(NULL, " ", &rest)) {
+    arguments_length += strlen (token) + 1;
+    args[argc++] = token;
+  }
+  int **addresses = (int **) malloc (argc * sizeof(int *));
+  // insert oom handler here
+  
+  /* Push args stack, right-most first */
+  for (i = argc - 1; i >= 0; --i){
+    int arg_length = strlen(args[i])+1;
+    if_.esp -= arg_length;
+    addresses[i] = if_.esp;
+    memcpy (if_.esp, args[i], arg_length);
+  }
+  
+  /* Round to word size 4. */
+  int word_align_offset = arguments_length % 4;
+  if_.esp -= word_align_offset ? 4 - word_align_offset : 0;
+
+  /* push 0 sentinel argument */
+  if_.esp -= 4;
+  *(int *) if_.esp = 0;
+
+  /* Push addresses to stack, right-most argument first */
+  for (i = argc - 1; i >= 0; i--){
+    if_.esp -= 4;
+    *(void **) (if_.esp) = addresses[i];
+  }
+
+  /* Push argv */
+  if_.esp -= 4;
+  *(char **) if_.esp = if_.esp + 4;
+
+  /* Push argc */
+  if_.esp -= 4;
+  *(int *) if_.esp = argc;
+
+  /* Push return address */
+  if_.esp -= 4;
+  *(int *) if_.esp = 0;
+
+  /* Deallocate memory */
+  free (addresses);
+  free (args);
+  palloc_free_page (file_name);
+  
+  
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -89,8 +155,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  while(1)
-    ;
+  while(1);
   return -1;
 }
 
@@ -224,21 +289,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
-  // parse
-  char *fn_copy;
-  char *executable;
-  char *arguments;
-  char *save_ptr;
-  fn_copy = palloc_get_page (0);
-  strlcpy (fn_copy, file_name, PGSIZE);
-  executable = strtok_r(fn_copy, " ", &save_ptr);
-  arguments = strtok_r(NULL, "\0", &save_ptr);
-  
   /* Open executable file. */
-  //file = filesys_open (file_name);
-  // Changed the implentation to open up executable only
-  file = filesys_open (executable); 
-
+  file = filesys_open (file_name);
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -323,63 +375,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
-
-  // Put arguments on the stack - Kaitlin
-
-  // Place the words at the top of the stack
-  buffer = strtok_r(arguments, " ", save_ptr);
-  int i;
-  int argc;
-  char **argv;
-  void *fake_return;
-  if(buffer) 
-  {
-    i = 1;
-    argv[0] = buffer;
-    argc = 1;
-    while(buffer = strtok_r(NULL," ", save_ptr))
-    {
-      // Store argument in argv
-      argv[i++] = buffer;
-      argc++;
-    }
-  }
-  else
-    // what do if no args?
-  {
-    argc = 0;
-    // There is an errrrrrrrorr, we had a proooooooblem
-  }
-  // Push values onto stack
-  i = 0;
-  for(i = 0; i < argc; i++)
-  {
-    // Push value onto the stack
-    esp = *argv[i];
-    // Decrement stack pointer
-    esp = esp - 1;
-  }
-  // Round the stack pointer down to a multiple of 4
-  // Insert word-align - 4 bytes
-  // Push argument pointers onto the stack
-  for(i = 0; i < argc; i++)
-  {
-    esp = argv[i];
-    // Decrement stack pointer
-    esp = esp - 1;
-  }
-  // Push address of argv[0] onto the stack 
-  esp = &argv[0];
-  // Decrement stack pointer
-  esp = esp - 1;
-  // Push argc onto the stack
-  esp = argc;
-  // Decrement stack pointer
-  esp = esp - 1;
-  // Push a fake return address
-  esp = fake_return;
-  // Decrement stack pointer
-  esp = esp - 1;
 
   success = true;
 
@@ -510,8 +505,7 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        //*esp = PHYS_BASE;
-        *esp = PHYS_BASE - 12; // DWNT
+        *esp = PHYS_BASE - 12;
       else
         palloc_free_page (kpage);
     }
