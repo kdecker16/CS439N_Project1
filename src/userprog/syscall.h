@@ -36,4 +36,6 @@ void close (int fd);
 
 void syscall_init (void);
 
+struct fd_elem * find_fd_elem (int fd);
+
 #endif /* userprog/syscall.h */
