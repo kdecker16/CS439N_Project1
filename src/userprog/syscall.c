@@ -17,6 +17,8 @@
 
 static void syscall_handler (struct intr_frame *);
 
+//TODO: create fd_elem struct definition
+
 void
 syscall_init (void) 
 {
@@ -101,7 +103,7 @@ pid_t syscall_exec (const char *file){
 	pid_t ret;
   
 	if (!file || !is_user_vaddr (file)) /* bad ptr */
-			return -1;
+		return -1;
 	ret = process_execute (file);
 	return ret;
 }
@@ -130,13 +132,13 @@ int syscall_open (const char *file){
 	struct fd_elem *fde;
 	int ret;
 
-	ret = -1; /* Initialize to -1 ("can not open") */
-	if (!file) /* file == NULL */
-	return -1;
+	ret = -1;
+	if (!file)
+		return -1;
 	if (!is_user_vaddr (file))
-	return syscall_exit (-1);
+		return syscall_exit (-1);
 	f = filesys_open (file);
-	if (!f) /* Bad file name */
+	if (!f)
 		return ret;
 
 	fde = (struct fd_elem *)malloc (sizeof (struct fd_elem));
@@ -158,10 +160,9 @@ int syscall_open (const char *file){
 int syscall_filesize (int fd){
 	struct file *f;
 
-	f = find_file_by_fd (fd);
-	if (!f)
-		return -1;
-	return file_length (f);
+	//TODO: find file method
+	f = find_fd_elem (fd)->file;
+	return !f ? -1 : file_length(f);
 }
 
 int syscall_read (int fd, void *buffer, unsigned length){
@@ -171,30 +172,29 @@ int syscall_read (int fd, void *buffer, unsigned length){
 
 	ret = -1;
 	lock_acquire (&file_lock);
-	if (fd == STDIN_FILENO){
-		for (i = 0; i != length; ++i)
-			*(uint8_t *)(buffer + i) = input_getc ();
-		ret = length;
-		lock_release (&file_lock);
-		return ret;
-	}
-	else if (fd == STDOUT_FILENO){
-		lock_release (&file_lock);
-		return ret;
-	}
-	else if (!is_user_vaddr (buffer) || !is_user_vaddr (buffer + length)){
+	if (!is_user_vaddr (buffer) || !is_user_vaddr (buffer + length)){
 		lock_release (&file_lock);
 		syscall_exit(-1);
 	}
-	else{
-		f = find_file_by_fd (fd);
-		if (!f){
+	switch(fd){
+		case STDIN_FILENO:
+			for (i = 0; i != length; ++i)
+				*(uint8_t *)(buffer + i) = input_getc ();
+			ret = length;
 			lock_release (&file_lock);
 			return ret;
-		}
-		ret = file_read (f, buffer, length);
-		lock_release (&file_lock);
-		return ret;
+		case STDOUT_FILENO:
+			lock_release (&file_lock);
+			return ret;
+		default:
+			f = find_fd_elem (fd)->file;
+			if (!f){
+				lock_release (&file_lock);
+				return ret;
+			}
+			ret = file_read (f, buffer, length);
+			lock_release (&file_lock);
+			return ret;
 	}
 }
 
@@ -207,8 +207,9 @@ int syscall_write (int fd, const void *buffer, unsigned length){
 
 void syscall_seek (int fd, unsigned position){
 	struct file *f;
-
-	f = find_file_by_fd (fd);
+	
+	//TODO: again, find file method
+	f = find_fd_elem (fd)->file;
 	if (!f)
 		syscall_exit(-1);
 	file_seek (f, (off_t)position);
@@ -216,7 +217,9 @@ void syscall_seek (int fd, unsigned position){
 
 unsigned syscall_tell (int fd){
 	struct file *f;
-	f = find_file_by_fd (fd);
+	
+	//TODO: again, find file method
+	f = find_fd_elem (fd)->file;
 	if (!f)
 		return -1;
 	return file_tell (f);
@@ -224,4 +227,19 @@ unsigned syscall_tell (int fd){
 void syscall_close (int fd){
 	//TODO: do this
 	return syscall_exit(1);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+//Support methods
+////////////////////////////////////////////////////////////////////////////////////////
+struct fd_elem * find_fd_elem (int fd){
+	struct fd_elem *ret;
+	struct list_elem *l;
+
+	for (l = list_begin (&file_list); l != list_end (&file_list); l = list_next (l)){
+		ret = list_entry (l, struct fd_elem, elem);
+		if (ret->fd == fd)
+			return ret;
+	}
+	return NULL;
 }
