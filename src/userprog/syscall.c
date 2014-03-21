@@ -123,7 +123,7 @@ static bool syscall_create (const char *file, unsigned initial_size){
 		filesys_create (file, initial_size);
 }
 
-bool syscall_remove (const char *file){
+static bool syscall_remove (const char *file){
 	if (!file)
 		return false;
 	else if (!is_user_vaddr (file)){
