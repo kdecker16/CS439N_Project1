@@ -250,7 +250,7 @@ static int syscall_write (int fd, const void *buffer, unsigned length){
 		syscall_exit(-1);
 	}
 	else{
-		f = find_file_by_fd (fd);
+		f = find_fd_elem (fd)->file;
 		if (!f){
 			lock_release (&file_lock);
 			return ret;
