@@ -13,6 +13,7 @@
 #include "threads/palloc.h"
 #include "threads/malloc.h"
 #include "devices/input.h"
+#include "devices/shutdown.h"
 #include "threads/synch.h"
 
 static void syscall_handler (struct intr_frame *);
@@ -81,11 +82,11 @@ syscall_handler (struct intr_frame *f UNUSED)
   }
 }
 
-void syscall_halt (void){
-	power_off();
+static void syscall_halt (void){
+	shutdown_power_off();
 }
 
-void syscall_exit (int status){
+static void syscall_exit (int status){
 	struct thread *t;
 	struct list_elem *l;
   
@@ -99,7 +100,7 @@ void syscall_exit (int status){
 	thread_exit();
 }
 
-pid_t syscall_exec (const char *file){
+static pid_t syscall_exec (const char *file){
 	pid_t ret;
   
 	if (!file || !is_user_vaddr (file)) /* bad ptr */
@@ -108,12 +109,18 @@ pid_t syscall_exec (const char *file){
 	return ret;
 }
 
-int syscall_wait (pid_t pid){
+static int syscall_wait (pid_t pid){
 	return process_wait (pid);
 }
 
-bool syscall_create (const char *file, unsigned initial_size){
-	return !file ? syscall_exit(-1) : filesys_create (file, initial_size);
+static bool syscall_create (const char *file, unsigned initial_size){
+	//return !file ? syscall_exit(-1) : filesys_create (file, initial_size);
+	if (!file){
+		syscall_exit(-1);
+		return false;
+	}
+	else
+		filesys_create (file, initial_size);
 }
 
 bool syscall_remove (const char *file){
@@ -121,13 +128,14 @@ bool syscall_remove (const char *file){
 		return false;
 	else if (!is_user_vaddr (file)){
 		printf("invalid user virtual address");
-		return syscall_exit (-1);    
+		syscall_exit (-1); 
+		return false;
 	}
 	else
 		return filesys_remove (file);
 }
 
-int syscall_open (const char *file){
+static int syscall_open (const char *file){
 	struct file *f;
 	struct fd_elem *fde;
 	int ret;
@@ -135,8 +143,11 @@ int syscall_open (const char *file){
 	ret = -1;
 	if (!file)
 		return -1;
-	if (!is_user_vaddr (file))
-		return syscall_exit (-1);
+	if (!is_user_vaddr (file)){
+		syscall_exit (-1);
+		return -1;
+	}
+		
 	f = filesys_open (file);
 	if (!f)
 		return ret;
@@ -150,6 +161,7 @@ int syscall_open (const char *file){
 	
 	/* allocate fde an ID, put fde in file_list, put fde in the current thread's file_list */
 	fde->file = f; 
+	//TODO: write allocator for fd
 	fde->fd = alloc_fid ();
 	list_push_back (&file_list, &fde->elem);
 	list_push_back (&thread_current ()->files, &fde->thread_elem);
@@ -157,7 +169,7 @@ int syscall_open (const char *file){
 	return ret;
 }
 
-int syscall_filesize (int fd){
+static int syscall_filesize (int fd){
 	struct file *f;
 
 	//TODO: find file method
@@ -165,12 +177,13 @@ int syscall_filesize (int fd){
 	return !f ? -1 : file_length(f);
 }
 
-int syscall_read (int fd, void *buffer, unsigned length){
+static int syscall_read (int fd, void *buffer, unsigned length){
 	struct file * f;
 	unsigned i;
 	int ret;
 
 	ret = -1;
+	//TODO: Add file_lock to thread
 	lock_acquire (&file_lock);
 	if (!is_user_vaddr (buffer) || !is_user_vaddr (buffer + length)){
 		lock_release (&file_lock);
@@ -198,14 +211,14 @@ int syscall_read (int fd, void *buffer, unsigned length){
 	}
 }
 
-int syscall_write (int fd, const void *buffer, unsigned length){
+static int syscall_write (int fd, const void *buffer, unsigned length){
 	if (fd == 1) {
 		putbuf (buffer, length);
 	}
 	return length;
 }
 
-void syscall_seek (int fd, unsigned position){
+static void syscall_seek (int fd, unsigned position){
 	struct file *f;
 	
 	//TODO: again, find file method
@@ -215,7 +228,7 @@ void syscall_seek (int fd, unsigned position){
 	file_seek (f, (off_t)position);
 }
 
-unsigned syscall_tell (int fd){
+static unsigned syscall_tell (int fd){
 	struct file *f;
 	
 	//TODO: again, find file method
@@ -224,7 +237,7 @@ unsigned syscall_tell (int fd){
 		return -1;
 	return file_tell (f);
 }
-void syscall_close (int fd){
+static void syscall_close (int fd){
 	//TODO: do this
 	return syscall_exit(1);
 }
@@ -232,7 +245,7 @@ void syscall_close (int fd){
 ////////////////////////////////////////////////////////////////////////////////////////
 //Support methods
 ////////////////////////////////////////////////////////////////////////////////////////
-struct fd_elem * find_fd_elem (int fd){
+static struct fd_elem * find_fd_elem (int fd){
 	struct fd_elem *ret;
 	struct list_elem *l;
 
