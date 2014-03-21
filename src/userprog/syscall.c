@@ -185,7 +185,19 @@ static int syscall_read (int fd, void *buffer, unsigned length){
 	ret = -1;
 	//TODO: Add file_lock to thread
 	lock_acquire (&file_lock);
-	if (!is_user_vaddr (buffer) || !is_user_vaddr (buffer + length)){
+
+	if (fd == STDIN_FILENO){
+		lock_release (&file_lock);
+		return ret;
+	}
+	else if (fd == STDOUT_FILENO){
+		for (i = 0; i != length; ++i)
+			*(uint8_t *)(buffer + i) = input_putc ();
+		ret = length;
+		lock_release (&file_lock);
+		return ret;
+	}
+	else if (!is_user_vaddr (buffer) || !is_user_vaddr (buffer + length)){
 		lock_release (&file_lock);
 		syscall_exit(-1);
 	}
@@ -215,6 +227,39 @@ static int syscall_write (int fd, const void *buffer, unsigned length){
 	if (fd == 1) {
 		putbuf (buffer, length);
 	}
+
+	struct file * f;
+	unsigned i;
+	int ret;
+
+	ret = -1;
+	lock_acquire (&file_lock);
+	if (fd == STDIN_FILENO){
+		for (i = 0; i != length; ++i)
+			*(uint8_t *)(buffer + i) = input_getc ();
+		ret = length;
+		lock_release (&file_lock);
+		return ret;
+	}
+	else if (fd == STDOUT_FILENO){
+		lock_release (&file_lock);
+		return ret;
+	}
+	else if (!is_user_vaddr (buffer) || !is_user_vaddr (buffer + length)){
+		lock_release (&file_lock);
+		syscall_exit(-1);
+	}
+	else{
+		f = find_file_by_fd (fd);
+		if (!f){
+			lock_release (&file_lock);
+			return ret;
+		}
+		ret = file_write (f, buffer, length);
+		lock_release (&file_lock);
+		return ret;
+	}
+
 	return length;
 }
 
