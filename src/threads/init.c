@@ -37,6 +37,7 @@
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
+#include "fixed-point.h"
 
 /* Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
@@ -91,7 +92,7 @@ main (void)
   console_init ();  
 
   /* Greet user. */
-  printf ("Pintos booting with %'"PRIu32" kB RAM...\n",
+  printf ("Pintos booting with %" PRIu32 " kB RAM...\n",
           init_ram_pages * PGSIZE / 1024);
 
   /* Initialize memory system. */
@@ -127,6 +128,7 @@ main (void)
   filesys_init (format_filesys);
 #endif
 
+  thread_load_avg = fp_from_int (0);
   printf ("Boot complete.\n");
   
   /* Run actions specified on kernel command line. */

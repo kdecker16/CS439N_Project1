@@ -4,7 +4,13 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-#include "threads/synch.h"
+
+#ifdef USERPROG
+#include <hash.h>
+#include "synch.h"
+#endif
+
+#include "fixed-point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -12,6 +18,7 @@ enum thread_status
     THREAD_RUNNING,     /* Running thread. */
     THREAD_READY,       /* Not running but ready to run. */
     THREAD_BLOCKED,     /* Waiting for an event to trigger. */
+    THREAD_ZOMBIE,      /* Waiting for parent's wait. Braaaaiiins!! */
     THREAD_DYING        /* About to be destroyed. */
   };
 
@@ -74,9 +81,7 @@ typedef int tid_t;
    an assertion failure in thread_current(), which checks that
    the `magic' member of the running thread's `struct thread' is
    set to THREAD_MAGIC.  Stack overflow will normally change this
-   value, triggering the assertion.  (So don't add elements below 
-   THREAD_MAGIC.)
-*/
+   value, triggering the assertion. */
 /* The `elem' member has a dual purpose.  It can be an element in
    the run queue (thread.c), or it can be an element in a
    semaphore wait list (synch.c).  It can be used these two ways
@@ -91,17 +96,29 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
+    int nice;                           /* Niceness of the thread: bigger is nicer */
     struct list_elem allelem;           /* List element for all threads list. */
+    
+    int64_t wakeup;                     /* only used for sleep */
+    fp_t recent_cpu;                    /* Recent CPU of this thread */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    struct list lock_list;              /* list of held locks */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-	int return_code;					/* Thread's return code defaulted */
-	struct semaphore file_lock;			/* Lock for handling files */
-	struct list files;				/* List of file elements for thread */
+    struct hash fds;                    /* open file descriptors */
+    int exit_code;                      /* exit code of the thread */
+
+    /* Shared between thread.c and userprog/process.c. */
+    struct thread *parent;              /* direct parent of thread */
+    struct list children;               /* list of direct children */
+    struct list_elem parent_elem;       /* to be inserted in parent's list */
+    struct semaphore wait_sema;         /* semaphore the parent waits for */
+    struct file *executable;            /* for rox, executable it was loaded */
+                                        /* from */
 #endif
 
     /* Owned by thread.c. */
@@ -143,5 +160,24 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+void sleep_add (int64_t wakeup);
+
+bool thread_cmp_wakeup (const struct list_elem *a,
+                        const struct list_elem *b,
+                        void *aux);
+bool thread_cmp_priority (const struct list_elem *a,
+                          const struct list_elem *b,
+                          void *aux);
+
+extern const uint32_t thread_stack_ofs;
+fp_t thread_load_avg;
+
+struct thread *thread_find_tid (tid_t t);
+
+#ifdef USERPROG
+void thread_dispel_zombie (struct thread *t);
+bool thread_is_file_currently_executed (struct file *f);
+#endif
 
 #endif /* threads/thread.h */

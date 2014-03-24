@@ -68,7 +68,8 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
-      list_push_back (&sema->waiters, &thread_current ()->elem);
+      struct thread *current_thread = thread_current ();
+      list_push_back (&sema->waiters, &current_thread->elem);
       thread_block ();
     }
   sema->value--;
@@ -109,15 +110,28 @@ void
 sema_up (struct semaphore *sema) 
 {
   enum intr_level old_level;
+  struct list_elem *max;
 
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
   sema->value++;
-  intr_set_level (old_level);
+  if (list_empty (&sema->waiters))
+    max = NULL;
+  else
+    {
+      max = list_max (&sema->waiters, thread_cmp_priority, NULL);
+      list_remove (max);
+      thread_unblock (list_entry (max, struct thread, elem));
+    }
+  
+  if (max && thread_cmp_priority (&thread_current ()->elem, max, NULL))
+    {
+      intr_set_level (old_level);
+      thread_yield ();
+    }
+  else
+    intr_set_level (old_level);
 }
 
 static void sema_test_helper (void *sema_);
@@ -178,6 +192,7 @@ lock_init (struct lock *lock)
   ASSERT (lock != NULL);
 
   lock->holder = NULL;
+  list_elem_init (&lock->holder_elem);
   sema_init (&lock->semaphore, 1);
 }
 
@@ -197,7 +212,12 @@ lock_acquire (struct lock *lock)
   ASSERT (!lock_held_by_current_thread (lock));
 
   sema_down (&lock->semaphore);
-  lock->holder = thread_current ();
+  
+  enum intr_level old_level = intr_disable ();
+  struct thread *current_thread = thread_current ();
+  list_push_back (&current_thread->lock_list, &lock->holder_elem);
+  lock->holder = current_thread;
+  intr_set_level (old_level);
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -209,14 +229,19 @@ lock_acquire (struct lock *lock)
 bool
 lock_try_acquire (struct lock *lock)
 {
-  bool success;
-
   ASSERT (lock != NULL);
   ASSERT (!lock_held_by_current_thread (lock));
+  ASSERT (!intr_context ());
 
-  success = sema_try_down (&lock->semaphore);
+  bool success = sema_try_down (&lock->semaphore);
   if (success)
-    lock->holder = thread_current ();
+    {
+      enum intr_level old_level = intr_disable ();
+      struct thread *current_thread = thread_current ();
+      list_push_back (&current_thread->lock_list, &lock->holder_elem);
+      lock->holder = current_thread;
+      intr_set_level (old_level);
+    }
   return success;
 }
 
@@ -230,8 +255,13 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
-
+  ASSERT (!intr_context ());
+  
+  enum intr_level old_level = intr_disable ();
+  list_remove_properly (&lock->holder_elem);
   lock->holder = NULL;
+  intr_set_level (old_level);
+  
   sema_up (&lock->semaphore);
 }
 
@@ -242,10 +272,14 @@ bool
 lock_held_by_current_thread (const struct lock *lock) 
 {
   ASSERT (lock != NULL);
-
+  ASSERT (
+    (lock->holder == NULL && !list_is_interior (&lock->holder_elem)) ||
+    (lock->holder != NULL &&  list_is_interior (&lock->holder_elem))
+  )
+  
   return lock->holder == thread_current ();
 }
-
+
 /* One semaphore in a list. */
 struct semaphore_elem 
   {
@@ -287,18 +321,35 @@ cond_init (struct condition *cond)
 void
 cond_wait (struct condition *cond, struct lock *lock) 
 {
-  struct semaphore_elem waiter;
-
   ASSERT (cond != NULL);
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
   
+  struct semaphore_elem waiter;
   sema_init (&waiter.semaphore, 0);
   list_push_back (&cond->waiters, &waiter.elem);
+  
   lock_release (lock);
   sema_down (&waiter.semaphore);
   lock_acquire (lock);
+}
+
+static bool
+cond_cmp_waiters (const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux UNUSED)
+{
+  struct semaphore_elem *aa, *bb;
+  struct list_elem      *ae, *be;
+  
+  aa = list_entry (a, struct semaphore_elem, elem);
+  ae = list_max (&aa->semaphore.waiters, thread_cmp_priority, NULL);
+  
+  bb = list_entry (b, struct semaphore_elem, elem);
+  be = list_max (&bb->semaphore.waiters, thread_cmp_priority, NULL);
+  
+  return thread_cmp_priority (ae, be, NULL);
 }
 
 /* If any threads are waiting on COND (protected by LOCK), then
@@ -316,9 +367,15 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
 
-  if (!list_empty (&cond->waiters)) 
-    sema_up (&list_entry (list_pop_front (&cond->waiters),
-                          struct semaphore_elem, elem)->semaphore);
+  enum intr_level old_level = intr_disable ();
+  if (!list_empty (&cond->waiters))
+    {
+      struct list_elem *e = list_max (&cond->waiters, cond_cmp_waiters, NULL);
+      list_remove (e);
+      struct semaphore_elem *s = list_entry (e, struct semaphore_elem, elem);
+      sema_up (&s->semaphore);
+    }
+  intr_set_level (old_level);
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
@@ -332,7 +389,110 @@ cond_broadcast (struct condition *cond, struct lock *lock)
 {
   ASSERT (cond != NULL);
   ASSERT (lock != NULL);
+  ASSERT (!intr_context ());
+  ASSERT (lock_held_by_current_thread (lock));
 
+  enum intr_level old_level = intr_disable ();
   while (!list_empty (&cond->waiters))
-    cond_signal (cond, lock);
+    {
+      struct list_elem *e = list_pop_front (&cond->waiters);
+      struct semaphore_elem *s = list_entry (e, struct semaphore_elem, elem);
+      sema_up (&s->semaphore);
+    }
+  intr_set_level (old_level);
+}
+
+void
+rwlock_init (struct rwlock *rwlock)
+{
+  ASSERT (rwlock != NULL);
+  
+  lock_init (&rwlock->edit_lock);
+  cond_init (&rwlock->readers_list);
+  cond_init (&rwlock->writers_list);
+  rwlock->readers_count = rwlock->writers_count = 0;
+}
+
+void
+rwlock_acquire_read (struct rwlock *rwlock)
+{
+  ASSERT (rwlock != NULL);
+  
+  lock_acquire (&rwlock->edit_lock);
+  while (rwlock->writers_count > 0)
+    cond_wait (&rwlock->readers_list, &rwlock->edit_lock);
+  ++rwlock->readers_count;
+  lock_release (&rwlock->edit_lock);
+}
+
+void
+rwlock_acquire_write (struct rwlock *rwlock)
+{
+  ASSERT (rwlock != NULL);
+  
+  lock_acquire (&rwlock->edit_lock);
+  while (rwlock->readers_count > 0 || rwlock->writers_count > 0)
+    cond_wait (&rwlock->writers_list, &rwlock->edit_lock);
+  ++rwlock->writers_count;
+  lock_release (&rwlock->edit_lock);
+}
+
+bool
+rwlock_try_acquire_read (struct rwlock *rwlock)
+{
+  ASSERT (rwlock != NULL);
+  
+  if (!lock_try_acquire (&rwlock->edit_lock))
+    return false;
+  if (rwlock->writers_count > 0)
+    return false;
+  ++rwlock->readers_count;
+  lock_release (&rwlock->edit_lock);
+  
+  return true;
+}
+
+bool
+rwlock_try_acquire_write (struct rwlock *rwlock)
+{
+  ASSERT (rwlock != NULL);
+  
+  if (!lock_try_acquire (&rwlock->edit_lock))
+    return false;
+  if (rwlock->readers_count > 0 || rwlock->writers_count > 0)
+    return false;
+  ++rwlock->writers_count;
+  lock_release (&rwlock->edit_lock);
+  
+  return true;
+}
+
+void
+rwlock_release_read (struct rwlock *rwlock)
+{
+  ASSERT (rwlock != NULL);
+  ASSERT (rwlock->readers_count > 0 && rwlock->writers_count == 0);
+  
+  lock_acquire (&rwlock->edit_lock);
+  --rwlock->readers_count;
+  if (rwlock->readers_count == 0 && !list_empty (&rwlock->writers_list.waiters))
+    cond_signal (&rwlock->writers_list, &rwlock->edit_lock);
+  else if (!list_empty (&rwlock->readers_list.waiters))
+    cond_broadcast (&rwlock->readers_list, &rwlock->edit_lock);
+  lock_release (&rwlock->edit_lock);
+}
+
+void
+rwlock_release_write (struct rwlock *rwlock)
+{
+  ASSERT (rwlock != NULL);
+  ASSERT (rwlock->readers_count == 0 && rwlock->writers_count == 1);
+  
+  lock_acquire (&rwlock->edit_lock);
+  --rwlock->writers_count;
+  if (!list_empty (&rwlock->readers_list.waiters))
+    cond_broadcast (&rwlock->readers_list, &rwlock->edit_lock);
+  else if (!list_empty (&rwlock->writers_list.waiters))
+    cond_signal (&rwlock->writers_list, &rwlock->edit_lock);
+  lock_release (&rwlock->edit_lock);
 }

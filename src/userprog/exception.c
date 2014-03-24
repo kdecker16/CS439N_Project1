@@ -156,9 +156,6 @@ page_fault (struct intr_frame *f)
           not_present ? "not present" : "rights violation",
           write ? "writing" : "reading",
           user ? "user" : "kernel");
-
-  printf("There is no crying in Pintos!\n");
-
   kill (f);
 }
 

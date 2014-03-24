@@ -1,41 +1,58 @@
 #ifndef USERPROG_SYSCALL_H
 #define USERPROG_SYSCALL_H
 
-#include <stdbool.h>
-#include <debug.h>
+#include <stdio.h>
+#include <string.h>
+#include <syscall-nr.h>
+#include <limits.h>
+#include "threads/interrupt.h"
+#include "threads/thread.h"
+#include "threads/vaddr.h"
+#include "devices/shutdown.h"
+#include "userprog/process.h"
+#include "userprog/pagedir.h"
+#include "filesys/filesys.h"
+#include "filesys/file.h"
+#include "threads/malloc.h"
+#include "threads/synch.h"
+#include "lib/user/syscall.h"
+#include "devices/input.h"
+#include <errno.h>
 
-/* Process identifier. */
-typedef int pid_t;
-#define PID_ERROR ((pid_t) -1)
+#define SYNCHRONIZE(syscall_func)              \
+({                              \
+  lock_acquire (&filesys_lock); \
+  __typeof (syscall_func) _r = (syscall_func);  \
+  lock_release (&filesys_lock); \
+  _r;                           \
+})
 
-/* Map region identifier. */
-typedef int mapid_t;
-#define MAP_FAILED ((mapid_t) -1)
+#define SYSCALL_FUNC_ARGS void              *arg1 UNUSED, \
+  void              *arg2 UNUSED, \
+  void              *arg3 UNUSED, \
+  struct intr_frame *if_  UNUSED
 
-/* Maximum characters in a filename written by readdir(). */
-#define READDIR_MAX_LEN 14
-
-/* Typical return values from main() and arguments to exit(). */
-#define EXIT_SUCCESS 0          /* Successful execution. */
-#define EXIT_FAILURE 1          /* Unsuccessful execution. */
-
-/* Projects 2 and later. */
-static void syscall_halt (void) NO_RETURN;
-static void syscall_exit (int status) NO_RETURN;
-static pid_t syscall_exec (const char *file);
-static int syscall_wait (pid_t);
-static bool syscall_create (const char *file, unsigned initial_size);
-static bool syscall_remove (const char *file);
-static int syscall_open (const char *file);
-static int syscall_filesize (int fd);
-static int syscall_read (int fd, void *buffer, unsigned length);
-static int syscall_write (int fd, const void *buffer, unsigned length);
-static void syscall_seek (int fd, unsigned position);
-static unsigned syscall_tell (int fd);
-static void syscall_close (int fd);
-
+#define SYSCALL_HANDLE_CASE(NAME) case NAME: \
+  syscall_handler_##NAME (arg1, arg2, arg3, if_); \
+  break;
+						  
 void syscall_init (void);
 
-static struct fd_elem * find_fd_elem (int fd);
+static signed get_strlen (const char *c);
+static struct fd * retrieve_fd (unsigned fd);
+
+static void syscall_handler_SYS_HALT (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_EXIT (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_EXEC (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_WAIT (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_CREATE (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_REMOVE (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_OPEN (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_FILESIZE (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_READ (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_WRITE (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_SEEK (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_TELL (SYSCALL_FUNC_ARGS);
+static void syscall_handler_SYS_CLOSE (SYSCALL_FUNC_ARGS);
 
 #endif /* userprog/syscall.h */
