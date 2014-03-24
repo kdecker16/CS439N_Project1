@@ -192,26 +192,10 @@ thread_tick (void)
         kernel_ticks++;
     }
 
-  if(thread_mlfqs && ((timer_ticks () % TIMER_FREQ) == 0))
-    {
-      /* Because of assumptions made by some of the tests, 
-       * load_avg must be updated exactly when the system 
-       * tick counter reaches a multiple of a second, that 
-       * is, when timer_ticks () % TIMER_FREQ == 0, and 
-       * not at any other time.
-       */
-      thread_recalculate_load_avg ();
-      thread_foreach (thread_recalculate_recent_cpu, NULL);
-      thread_foreach (thread_recalculate_priorities, NULL);
-    }
 
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
     {
-      if(thread_mlfqs && t != idle_thread)
-        {
-          thread_recalculate_priorities (thread_current (), NULL);
-        }
       intr_yield_on_return ();
     }
 }
@@ -580,17 +564,6 @@ thread_set_priority (int new_priority)
 static int
 thread_get_priority_of_real (struct thread *t)
 {
-  /* Idea:
-   * 
-   * result = t->priority
-   * for each lock_iter in t->lock_list:
-   *   for each thread_iter in lock->semaphore.waiters:
-   *     result = max(result, thread_get_priority_of_real(thread_iter))
-   * return result
-   */
-   
-  // TODO: detect deadlock.
-  // Deadlocked threads would render a stackover currently.
   
   ASSERT (is_thread (t));
   ASSERT (intr_get_level () == INTR_OFF);
@@ -653,39 +626,19 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice) 
 {
-  if(nice < -20)
-    nice = -20;
-  else if(nice > 20)
-    nice = 20;
-  struct thread *t = thread_current ();
-    
-  enum intr_level old_level = intr_disable ();
-  t->nice = nice;
-  thread_recalculate_priorities (t, NULL);
-  intr_set_level (old_level);
+	return 0;
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  return thread_current ()->nice;
+	return 0;
 }
 
 static void
 thread_recalculate_recent_cpu (struct thread *t, void *aux UNUSED)
 {
-  ASSERT (intr_get_level () == INTR_OFF);
-  ASSERT (is_thread (t));
-
-  /* (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice.*/
-  fp_t result = thread_load_avg;
-  result = fp_mult (result, fp_from_int (2));
-  result = fp_div  (result, fp_add (fp_mult (thread_load_avg, fp_from_int (2)),
-                                    fp_from_int (1)));
-  result = fp_mult (result, t->recent_cpu);
-  result = fp_add  (result, fp_from_int (t->nice));
-  t->recent_cpu = result;
 }
 
 /* Returns 100 times the system load average. */

@@ -43,21 +43,6 @@ void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
 
-struct rwlock
-  {
-    struct lock edit_lock;
-    struct condition readers_list, writers_list;
-    volatile unsigned readers_count, writers_count;
-  };
-
-void rwlock_init (struct rwlock *rwlock);
-void rwlock_acquire_read (struct rwlock *rwlock);
-void rwlock_acquire_write (struct rwlock *rwlock);
-bool rwlock_try_acquire_read (struct rwlock *rwlock);
-bool rwlock_try_acquire_write (struct rwlock *rwlock);
-void rwlock_release_read (struct rwlock *rwlock);
-void rwlock_release_write (struct rwlock *rwlock);
-
 /* Optimization barrier.
 
    The compiler will not reorder operations across an
